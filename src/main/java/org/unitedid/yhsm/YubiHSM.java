@@ -30,10 +30,10 @@ package org.unitedid.yhsm;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.unitedid.yhsm.internal.*;
+import static org.unitedid.yhsm.internal.Defines.*;
+import static org.unitedid.yhsm.utility.Utils.*;
 
 import java.util.Map;
-
-import static org.unitedid.yhsm.utility.Utils.*;
 
 /** <code>YubiHSM</code> the main class to use for YubiHSM commands */
 public class YubiHSM  {
@@ -278,6 +278,31 @@ public class YubiHSM  {
     /**
      * Generate HMAC SHA1 using a key handle in the YubiHSM.
      *
+     * @param bytes the data used to generate the SHA1
+     * @param keyHandle the key handle to use in the YubiHSM
+     * @param toBuffer set to true to get the SHA1 stored into the internal buffer, for use in some other cryptographic operations.
+     * @return a map containing status and SHA1 hash
+     * @throws YubiHSMCommandFailedException if the YubiHSM fail to execute the command
+     * @throws YubiHSMErrorException if validation fail for some values returned by the YubiHSM
+     * @throws YubiHSMInputException if an argument does not validate
+     */
+    public byte[] generateHMACSHA1(byte[] bytes, int keyHandle, boolean toBuffer) throws YubiHSMInputException, YubiHSMCommandFailedException, YubiHSMErrorException {
+        byte[] result = {};
+        byte flags = YSM_HMAC_SHA1_RESET;
+        if (toBuffer)
+            flags |= YSM_HMAC_SHA1_TO_BUFFER;
+        for (int b = 0; b < bytes.length; b = b + YSM_DATA_BUF_SIZE) {
+            if ((bytes.length - b) <= YSM_DATA_BUF_SIZE)
+                flags |= YSM_HMAC_SHA1_FINAL;
+            result = HMACCmd.execHMACSHA1_Raw(deviceHandler, rangeOfByteArray(bytes, b, Math.min(bytes.length - b, YSM_DATA_BUF_SIZE)), keyHandle, flags);
+            flags &= (byte)0xFE; // remove YSM_HMAC_SHA1_RESET flag
+        }
+        return result;
+    }
+
+    /**
+     * Generate HMAC SHA1 using a key handle in the YubiHSM.
+     *
      * @param data the data used to generate the SHA1
      * @param keyHandle the key handle to use in the YubiHSM
      * @param last set to false to not get a hash generated for the initial request
@@ -385,7 +410,25 @@ public class YubiHSM  {
      * @throws YubiHSMCommandFailedException if the YubiHSM fail to execute the command
      */
     public String encryptAES_ECB(String plaintext, int keyHandle) throws YubiHSMErrorException, YubiHSMInputException, YubiHSMCommandFailedException {
-        return AESECBCmd.encrypt(deviceHandler, keyHandle, plaintext);
+        return byteArrayToHex(this.encryptAES_ECB(plaintext.getBytes(), keyHandle));
+    }
+
+    /**
+     * AES ECB encrypt an array of bytes using a specific key handle.
+     *
+     * @param keyHandle the key handle to use when encrypting AES ECB
+     * @param bytes the bytes to encrypt
+     * @return an array of bytes
+     * @throws YubiHSMInputException if an argument does not validate
+     * @throws YubiHSMErrorException if validation fail for some values returned by the YubiHSM
+     * @throws YubiHSMCommandFailedException if the YubiHSM fail to execute the command
+     */
+    public byte[] encryptAES_ECB(byte[] bytes, int keyHandle) throws YubiHSMErrorException, YubiHSMInputException, YubiHSMCommandFailedException {
+        byte[] result = {};
+        for (int b = 0; b < bytes.length; b = b + YSM_BLOCK_SIZE) {
+            result = concatAllArrays(result, AESECBCmd.encryptBlock(deviceHandler, keyHandle, rangeOfByteArray(bytes, b, Math.min(bytes.length - b, YSM_BLOCK_SIZE))));
+        }
+        return result;
     }
 
     /**
@@ -399,7 +442,25 @@ public class YubiHSM  {
      * @throws YubiHSMCommandFailedException if the YubiHSM fail to execute the command
      */
     public String decryptAES_ECB(String cipherText, int keyHandle) throws YubiHSMErrorException, YubiHSMInputException, YubiHSMCommandFailedException {
-        return AESECBCmd.decrypt(deviceHandler, keyHandle, cipherText);
+        return new String(this.decryptAES_ECB(hexToByteArray(cipherText), keyHandle)).trim();
+    }
+
+    /**
+     * AES ECB decrypt an array of bytes using a specific key handle.
+     *
+     * @param keyHandle the key handle to use when decrypting AES ECB
+     * @param cipherBytes the cipher string
+     * @return an array of bytes
+     * @throws YubiHSMInputException if an argument does not validate
+     * @throws YubiHSMErrorException if validation fail for some values returned by the YubiHSM
+     * @throws YubiHSMCommandFailedException if the YubiHSM fail to execute the command
+     */
+    public byte[] decryptAES_ECB(byte[] cipherBytes, int keyHandle) throws YubiHSMErrorException, YubiHSMInputException, YubiHSMCommandFailedException {
+        byte[] result = {};
+        for (int b = 0; b < cipherBytes.length; b = b + YSM_BLOCK_SIZE) {
+            result = concatAllArrays(result, AESECBCmd.decryptBlock(deviceHandler, keyHandle, rangeOfByteArray(cipherBytes, b, Math.min(cipherBytes.length - b, YSM_BLOCK_SIZE))));
+        }
+        return result;
     }
 
     /**
@@ -466,7 +527,6 @@ public class YubiHSM  {
     /**
      * Have the YubiHSM unlock the HSM operations (those involving the keystore) with a YubiKey OTP.
      *
-     * @param device the YubiHSM device
      * @param publicId the YubiKey public id (in hex)
      * @param otp the YubiKey OTP (in hex)
      * @return true if unlock was successful
